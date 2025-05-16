@@ -2,6 +2,7 @@ package main
 
 import (
 	"example/crud/auth"
+	"example/crud/database"
 	"example/crud/routes"
 	"log"
 
@@ -9,6 +10,10 @@ import (
 )
 
 func main() {
+	// Initialize database
+	database.InitDB()
+	defer database.CloseDB()
+
 	// Initialize Gin router
 	router := gin.Default()
 

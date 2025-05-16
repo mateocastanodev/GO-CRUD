@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"database/sql"
 	"errors"
+	"example/crud/database"
 	"example/crud/models"
 
 	"golang.org/x/crypto/bcrypt"
@@ -9,21 +11,25 @@ import (
 
 // Service handles authentication business logic
 type Service struct {
-	// In-memory user storage (temporary, will be replaced with database)
-	users map[string]*models.User
+	db *sql.DB
 }
 
 // NewService creates a new auth service
 func NewService() *Service {
 	return &Service{
-		users: make(map[string]*models.User),
+		db: database.DB,
 	}
 }
 
 // Register creates a new user
 func (s *Service) Register(req *models.RegisterRequest) (*models.User, error) {
 	// Check if user already exists
-	if _, exists := s.users[req.Email]; exists {
+	var exists bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)", req.Email).Scan(&exists)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
 		return nil, errors.New("user already exists")
 	}
 
@@ -34,32 +40,52 @@ func (s *Service) Register(req *models.RegisterRequest) (*models.User, error) {
 	}
 
 	// Create new user
-	user := &models.User{
-		ID:       uint(len(s.users) + 1), // Temporary ID generation
-		Username: req.Username,
-		Email:    req.Email,
-		Password: string(hashedPassword),
+	result, err := s.db.Exec(
+		"INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+		req.Username,
+		req.Email,
+		string(hashedPassword),
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	// Store user
-	s.users[req.Email] = user
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+
+	user := &models.User{
+		ID:       uint(id),
+		Username: req.Username,
+		Email:    req.Email,
+	}
 
 	return user, nil
 }
 
 // Login authenticates a user
 func (s *Service) Login(req *models.LoginRequest) (*models.User, error) {
-	// Find user
-	user, exists := s.users[req.Email]
-	if !exists {
+	var user models.User
+	var hashedPassword string
+
+	err := s.db.QueryRow(
+		"SELECT id, username, email, password FROM users WHERE email = ?",
+		req.Email,
+	).Scan(&user.ID, &user.Username, &user.Email, &hashedPassword)
+
+	if err == sql.ErrNoRows {
 		return nil, errors.New("invalid credentials")
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Check password
-	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password))
+	err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password))
 	if err != nil {
 		return nil, errors.New("invalid credentials")
 	}
 
-	return user, nil
+	return &user, nil
 }
